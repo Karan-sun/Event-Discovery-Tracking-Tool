@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event Discovery Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Event Discovery & Tracking</h1>
+            <p>Automated Scraper & Manager</p>
+        </header>
+
+        <div class="card controls">
+            <div class="control-group">
+                <label for="city-select">Select City</label>
+                <select id="city-select">
+                    <option value="mumbai">Mumbai</option>
+                    <option value="bengaluru">Bengaluru</option>
+                    <option value="delhi-ncr">Delhi-NCR</option>
+                    <option value="pune">Pune</option>
+                </select>
+            </div>
+
+            <div class="button-group">
+                <button id="scrape-btn" class="primary-btn">
+                    <span class="icon">🔍</span> Find Events Now
+                </button>
+                <button id="download-btn" class="secondary-btn">
+                    <span class="icon">📥</span> Download Excel
+                </button>
+            </div>
+        </div>
+
+        <div class="card scheduler-card">
+            <h3>Automation</h3>
+            <div class="scheduler-controls">
+                <div class="status-indicator" id="scheduler-status">
+                    <span class="dot"></span> Scheduler: <span id="status-text">Stopped</span>
+                </div>
+                <button id="toggle-scheduler-btn" class="small-btn">Start Scheduler</button>
+            </div>
+            <p class="hint">Runs every 1 hour for the selected city.</p>
+        </div>
+
+        <div id="results-area">
+            <h3>Upcoming Events</h3>
+            <div class="table-wrapper">
+                <table id="events-table">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Event Name</th>
+                            <th>Date</th>
+                            <th>Venue</th>
+                            <th>Category</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Rows populated by JS -->
+                    </tbody>
+                </table>
+                <div id="empty-state" class="empty-state">
+                    No events found. Click 'Find Events Now' to start.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden">Operation Successful</div>
+
+    <script>
+        const API_BASE = '/api';
+
+        // Elements
+        const scrapeBtn = document.getElementById('scrape-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        const tableBody = document.querySelector('#events-table tbody');
+        const emptyState = document.getElementById('empty-state');
+        const citySelect = document.getElementById('city-select');
+        const schedulerBtn = document.getElementById('toggle-scheduler-btn');
+        const schedulerStatusCtx = document.getElementById('status-text');
+        const schedulerDot = document.querySelector('.dot');
+        const toast = document.getElementById('toast');
+
+        // State
+        let isSchedulerRunning = false;
+
+        // Functions
+        function showToast(message, isError = false) {
+            toast.textContent = message;
+            toast.className = 'toast visible' + (isError ? ' error' : '');
+            setTimeout(() => {
+                toast.className = 'toast hidden';
+            }, 3000);
+        }
+
+        async function fetchEvents() {
+            try {
+                const res = await fetch(`${API_BASE}/events`);
+                const events = await res.json();
+                renderTable(events);
+            } catch (err) {
+                console.error("Error fetching events:", err);
+            }
+        }
+
+        function renderTable(events) {
+            tableBody.innerHTML = '';
+            if (events.length === 0) {
+                emptyState.style.display = 'block';
+                return;
+            }
+            emptyState.style.display = 'none';
+
+            events.forEach(event => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><span class="badge ${event.status.toLowerCase()}">${event.status}</span></td>
+                    <td class="fw-bold">${event.name}</td>
+                    <td>${event.date}</td>
+                    <td>${event.venue}</td>
+                    <td>${event.category}</td>
+                `;
+                tableBody.appendChild(tr);
+            });
+        }
+
+        async function handleScrape() {
+            const city = citySelect.value;
+            scrapeBtn.disabled = true;
+            scrapeBtn.innerHTML = '<span class="icon">⌛</span> Scraping...';
+
+            try {
+                const res = await fetch(`${API_BASE}/scrape`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ city })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(`Found ${data.events.length} events!`);
+                    renderTable(data.events);
+                } else {
+                    showToast('Scraping failed', true);
+                }
+            } catch (err) {
+                showToast('Error connecting to server', true);
+            } finally {
+                scrapeBtn.disabled = false;
+                scrapeBtn.innerHTML = '<span class="icon">🔍</span> Find Events Now';
+            }
+        }
+
+        function toggleScheduler() {
+            const city = citySelect.value;
+            if (isSchedulerRunning) {
+                // Stop
+                fetch(`${API_BASE}/scheduler/stop`, { method: 'POST' })
+                    .then(() => {
+                        isSchedulerRunning = false;
+                        updateSchedulerUI();
+                        showToast('Scheduler stopped');
+                    });
+            } else {
+                // Start
+                fetch(`${API_BASE}/scheduler/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ city })
+                })
+                    .then(() => {
+                        isSchedulerRunning = true;
+                        updateSchedulerUI();
+                        showToast('Scheduler started');
+                    });
+            }
+        }
+
+        function updateSchedulerUI() {
+            if (isSchedulerRunning) {
+                schedulerBtn.textContent = 'Stop Scheduler';
+                schedulerBtn.classList.add('destructive');
+                schedulerStatusCtx.textContent = 'Running';
+                schedulerDot.style.background = '#2ecc71';
+            } else {
+                schedulerBtn.textContent = 'Start Scheduler';
+                schedulerBtn.classList.remove('destructive');
+                schedulerStatusCtx.textContent = 'Stopped';
+                schedulerDot.style.background = '#e74c3c';
+            }
+        }
+
+        // Event Listeners
+        scrapeBtn.addEventListener('click', handleScrape);
+
+        downloadBtn.addEventListener('click', () => {
+            window.location.href = `${API_BASE}/download`;
+        });
+
+        schedulerBtn.addEventListener('click', toggleScheduler);
+
+        // Initial Load
+        fetchEvents();
+
+    </script>
+</body>
+
+</html>
